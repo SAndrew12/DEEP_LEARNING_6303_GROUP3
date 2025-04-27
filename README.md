@@ -3,9 +3,9 @@ Group repo for Prof. Jafari's Deep Learning course.
 
 DATA LOADING INSTRUCTIONS
 
-> You will create and load data into a new dir called Data
-> This dir name already exists as .gitignore in the repo
-> You will load the data once, and git will ignore it
+> You will create and load data into a new dir called Data /br
+> This dir name already exists as .gitignore in the repo /br
+> You will load the data once, and git will ignore it /br
 
 
 ```cd Code/Trashnet```
