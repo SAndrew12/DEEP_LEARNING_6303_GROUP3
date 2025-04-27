@@ -13,7 +13,28 @@ import pandas as pd
 import numpy as np
 import os
 #%%
-dataset_path = '/DEEP_LEARNING_6303_GROUP3/Code/Trashnet/data/dataset-resized'
+
+# Get the directory this script is in
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Go up one level (from code/ to Trashnet/)
+trashnet_dir = os.path.abspath(os.path.join(current_dir, ".."))
+
+# Now build the path to the dataset
+dataset_path = os.path.join(trashnet_dir, "Data", "dataset-resized")
+
+# Print for confirmation
+print(f"Current dir: {current_dir}")
+print(f"Trashnet dir: {trashnet_dir}")
+print(f"Dataset path: {dataset_path}")
+
+# Check if path exists
+if not os.path.isdir(dataset_path):
+    raise FileNotFoundError(f"Dataset directory not found at {dataset_path}")
+
+
+
+#%%
 img_size = (224, 224)
 batch_size = 32
 epochs = 10
