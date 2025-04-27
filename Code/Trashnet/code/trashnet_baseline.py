@@ -17,7 +17,7 @@ dataset_path = '/DEEP_LEARNING_6303_GROUP3/Code/Trashnet/data/dataset-resized'
 img_size = (224, 224)
 batch_size = 32
 epochs = 10
-test_split = 0.2
+test_split = 0.3
 
 # Data generators setup
 full_datagen = ImageDataGenerator(rescale=1./255, validation_split=test_split)
