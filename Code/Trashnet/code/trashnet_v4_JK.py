@@ -1,14 +1,16 @@
 import tensorflow as tf
 from tensorflow.keras.applications import (
     MobileNetV2, ResNet101V2, ResNet152V2, MobileNet,
-    MobileNetV3Small, MobileNetV3Large
-)
+    MobileNetV3Small, MobileNetV3Large, EfficientNetV2S)
+
+
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Lambda, Input, Dropout
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications.resnet_v2 import preprocess_input as resnet_preprocess
 from tensorflow.keras.applications.mobilenet import preprocess_input as mobilenet_preprocess
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenetv2_preprocess
+from tensorflow.keras.applications.efficientnet_v2 import preprocess_input as efficientnetv2_preprocess #new sd
 try:
     from tensorflow.keras.optimizers import AdamW
 except ImportError:
@@ -18,7 +20,8 @@ import pandas as pd
 import numpy as np
 import os
 import sys
-
+import matplotlib.pyplot as plt #new sd
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay #new sd
 
 
 # Get the directory this script is in
@@ -73,7 +76,10 @@ train_val_datagen = ImageDataGenerator(
     rotation_range=20,
     zoom_range=0.2,
     horizontal_flip=True,
+    shear_range=0.2, #new sd
+    brightness_range=[0.7, 1.3], #new sd
     validation_split=0.25
+
 )
 
 train_generator = train_val_datagen.flow_from_directory(
@@ -128,6 +134,11 @@ model_configs = [
         'class': MobileNetV3Large,
         'preprocess_fn': mobilenetv2_preprocess
     },
+    {
+    'name': 'EfficientNetV2S', #new sd
+    'class': EfficientNetV2S,
+    'preprocess_fn': efficientnetv2_preprocess
+}
 ]
 
 # --- Results Collection ---
@@ -246,6 +257,62 @@ for config in model_configs:
     # Model weights should be from the best epoch due to restore_best_weights=True in EarlyStopping
     print(f"\n--- Evaluating on Test Set ({config['name']}) ---")
     test_loss, test_acc = model.evaluate(test_generator, steps=max(1, test_generator.samples // batch_size))
+
+    # --- Save loss plots and conf. matrix --- sd
+    test_generator.reset()
+    y_pred_probs = model.predict(test_generator, steps=int(np.ceil(test_generator.samples / batch_size)))
+    y_pred_classes = np.argmax(y_pred_probs, axis=1)
+    y_true = test_generator.classes
+
+    # Confusion Matrix
+    cm = confusion_matrix(y_true, y_pred_classes)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=list(test_generator.class_indices.keys()))
+    fig_cm, ax_cm = plt.subplots(figsize=(8, 8))
+    disp.plot(cmap='Blues', ax=ax_cm, xticks_rotation=45)
+    plt.title(f"Confusion Matrix - {config['name']}")
+    confusion_matrix_path = os.path.join(current_dir, f"confusion_matrix_{config['name']}.png")
+    fig_cm.savefig(confusion_matrix_path)
+    plt.close(fig_cm)
+
+    print(f"Saved Confusion Matrix for {config['name']} at {confusion_matrix_path}")
+
+
+    # --- Training Curves ---
+    # Combine histories safely
+    total_acc = history_initial.history['accuracy'].copy()
+    total_val_acc = history_initial.history['val_accuracy'].copy()
+    total_loss = history_initial.history['loss'].copy()
+    total_val_loss = history_initial.history['val_loss'].copy()
+
+    if 'history_fine_tune' in locals():
+        total_acc += history_fine_tune.history['accuracy']
+        total_val_acc += history_fine_tune.history['val_accuracy']
+        total_loss += history_fine_tune.history['loss']
+        total_val_loss += history_fine_tune.history['val_loss']
+
+    epochs_range = range(len(total_acc))
+
+    fig_curve, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Accuracy Plot
+    ax1.plot(epochs_range, total_acc, label='Training Accuracy')
+    ax1.plot(epochs_range, total_val_acc, label='Validation Accuracy')  # <- FIXED
+    ax1.set_title(f"Accuracy - {config['name']}")
+    ax1.legend()
+
+    # Loss Plot
+    ax2.plot(epochs_range, total_loss, label='Training Loss')
+    ax2.plot(epochs_range, total_val_loss, label='Validation Loss')
+    ax2.set_title(f"Loss - {config['name']}")
+    ax2.legend()
+
+    plt.tight_layout()
+    training_curve_path = os.path.join(current_dir, f"training_curves_{config['name']}.png")
+    fig_curve.savefig(training_curve_path)
+    plt.close(fig_curve)
+
+    print(f"Saved Training Curves for {config['name']} at {training_curve_path}")
+    # --- Save loss plots and conf. matrix --- sd
 
     # --- Store Results ---
     final_train_acc = history_final.history['accuracy'][-1] # Accuracy at the end of training run

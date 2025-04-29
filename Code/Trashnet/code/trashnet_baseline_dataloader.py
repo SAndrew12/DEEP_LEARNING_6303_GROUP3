@@ -151,18 +151,13 @@ for config in model_configs:
         'Val Accuracy': f"{history.history['val_accuracy'][-1]:.4f}"
     })
 
-    # Save model and training history
-    # model.save(f"/kaggle/working/{config['name']}_trashnet.h5")
-    # np.save(f"/kaggle/working/{config['name']}_history.npy", history.history)
 
-# # Save results to CSV
-# results_df = pd.DataFrame(results)
-# results_df = results_df.sort_values(by='Test Accuracy', ascending=False)
-# results_df.to_csv('/kaggle/working/model_comparison.csv', index=False)
-#
-# print("\n\033[1mModel Comparison Results:\033[0m")
-# print(results_df.to_markdown(index=False))
 
-# from IPython.display import FileLink
-# FileLink('/kaggle/working/ResNet152V2_history.npy')
+
+
+results_df = pd.DataFrame(results)
+# CHANGED: Sort by best overall validation accuracy before looking at test accuracy
+results_df
+
+
 
