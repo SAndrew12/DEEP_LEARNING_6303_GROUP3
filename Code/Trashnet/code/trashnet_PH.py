@@ -1,7 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras.applications import (
     MobileNetV2, ResNet101V2, ResNet152V2, MobileNet,
-    MobileNetV3Small, MobileNetV3Large
+    MobileNetV3Small, MobileNetV3Large, EfficientNetV2S
 )
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Lambda, Input, Dropout # Added Dropout
 from tensorflow.keras.models import Model
@@ -9,20 +9,22 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications.resnet_v2 import preprocess_input as resnet_preprocess
 from tensorflow.keras.applications.mobilenet import preprocess_input as mobilenet_preprocess
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenetv2_preprocess
+from tensorflow.keras.applications.efficientnet_v2 import preprocess_input as efficientnetv2_preprocess #new sd
 from tensorflow.keras.optimizers import Adam # Explicitly import Adam to set learning rate
 from tensorflow.keras.callbacks import EarlyStopping # Import EarlyStopping
 import pandas as pd
 import numpy as np
 import os
 import sys
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.utils.class_weight import compute_class_weight
 
-# Get the directory this script is in
+
+
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Go up one level (from code/ to Trashnet/)
 trashnet_dir = os.path.abspath(os.path.join(current_dir, ".."))
-
-# Now build the path to the dataset
 dataset_path = os.path.join(trashnet_dir, "data", "dataset-resized")
 
 # Print for confirmation
@@ -70,6 +72,8 @@ train_val_datagen = ImageDataGenerator(
     rotation_range=20,
     zoom_range=0.2,
     horizontal_flip=True,
+    shear_range=0.2,  # new sd
+    brightness_range=[0.7, 1.3],  # new sd
     validation_split=0.25 # 25% of the (1 - test_split) data -> validation set
     # This means Train: 60%, Val: 20%, Test: 20% of total
 )
@@ -89,13 +93,51 @@ val_generator = train_val_datagen.flow_from_directory(
     subset='validation', # Use the 'validation' subset from the split *within* this generator
     class_mode='categorical'
 )
+# --- class weights --- sd
+class_counts = {
+    'cardboard': 403,
+    'glass': 501,
+    'metal': 410,
+    'paper': 594,
+    'plastic': 482,
+    'trash': 137
+}
 
+class_labels = list(train_generator.class_indices.keys())
+num_classes = len(class_labels)
+
+# Generate a flat array of class labels repeated by count
+y_all = np.concatenate([
+    np.full(class_counts[label], idx) for idx, label in enumerate(class_labels)
+])
+
+# Compute weights
+# Compute balanced class weights
+class_weight_values = compute_class_weight(
+    class_weight='balanced',
+    classes=np.arange(num_classes),
+    y=y_all
+)
+
+# Reduce the strength of class weighting to avoid hurting majority class accuracy
+alpha = 0.2  # 0 = no weighting, 1 = full weighting
+class_weight_values = 1.0 + alpha * (class_weight_values - 1.0)
+class_weight_dict = dict(enumerate(class_weight_values))
+print("Class Weights:", class_weight_dict)
+
+
+# --- class weights --- sd
 print(f"Training images: {train_generator.samples}")
 print(f"Validation images: {val_generator.samples}")
 print(f"Test images: {test_generator.samples}")
 
 # --- Model Configurations ---
 model_configs = [
+    {
+        'name': 'EfficientNetV2S',  # new sd
+        'class': EfficientNetV2S,
+        'preprocess_fn': efficientnetv2_preprocess
+    },
     {
         'name': 'MobileNetV2',
         'class': MobileNetV2,
@@ -125,7 +167,8 @@ model_configs = [
         'name': 'MobileNetV3Large',
         'class': MobileNetV3Large,
         'preprocess_fn': mobilenetv2_preprocess
-    },
+    }
+
 ]
 
 # --- Results Collection ---
@@ -175,7 +218,8 @@ for config in model_configs:
         steps_per_epoch=max(1, train_generator.samples // batch_size),
         validation_steps=max(1, val_generator.samples // batch_size),
         # Use early stopping
-        callbacks=[early_stopping]
+        callbacks=[early_stopping],
+        class_weight=class_weight_dict #new sd
     )
 
     initial_epochs_trained = len(history_initial.history['loss'])
@@ -207,7 +251,8 @@ for config in model_configs:
             initial_epoch=initial_epochs_trained,
             steps_per_epoch=max(1, train_generator.samples // batch_size),
             validation_steps=max(1, val_generator.samples // batch_size),
-            callbacks=[early_stopping]
+            callbacks=[early_stopping],
+            class_weight=class_weight_dict
         )
         history_final = history_fine_tune
     else:
@@ -217,6 +262,63 @@ for config in model_configs:
     # --- Evaluate on Test Set ---
     print(f"\n--- Evaluating on Test Set ({config['name']}) ---")
     test_loss, test_acc = model.evaluate(test_generator, steps=max(1, test_generator.samples // batch_size))
+
+
+    # --- Save loss plots and conf. matrix --- sd
+    test_generator.reset()
+    y_pred_probs = model.predict(test_generator, steps=int(np.ceil(test_generator.samples / batch_size)))
+    y_pred_classes = np.argmax(y_pred_probs, axis=1)
+    y_true = test_generator.classes
+
+    # Confusion Matrix
+    cm = confusion_matrix(y_true, y_pred_classes)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=list(test_generator.class_indices.keys()))
+    fig_cm, ax_cm = plt.subplots(figsize=(8, 8))
+    disp.plot(cmap='Blues', ax=ax_cm, xticks_rotation=45)
+    plt.title(f"Confusion Matrix - {config['name']}")
+    confusion_matrix_path = os.path.join(current_dir, f"confusion_matrix_{config['name']}.png")
+    fig_cm.savefig(confusion_matrix_path)
+    plt.close(fig_cm)
+
+    print(f"Saved Confusion Matrix for {config['name']} at {confusion_matrix_path}")
+
+
+    # --- Training Curves ---
+    # Combine histories safely
+    total_acc = history_initial.history['accuracy'].copy()
+    total_val_acc = history_initial.history['val_accuracy'].copy()
+    total_loss = history_initial.history['loss'].copy()
+    total_val_loss = history_initial.history['val_loss'].copy()
+
+    if 'history_fine_tune' in locals():
+        total_acc += history_fine_tune.history['accuracy']
+        total_val_acc += history_fine_tune.history['val_accuracy']
+        total_loss += history_fine_tune.history['loss']
+        total_val_loss += history_fine_tune.history['val_loss']
+
+    epochs_range = range(len(total_acc))
+
+    fig_curve, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Accuracy Plot
+    ax1.plot(epochs_range, total_acc, label='Training Accuracy')
+    ax1.plot(epochs_range, total_val_acc, label='Validation Accuracy')  # <- FIXED
+    ax1.set_title(f"Accuracy - {config['name']}")
+    ax1.legend()
+
+    # Loss Plot
+    ax2.plot(epochs_range, total_loss, label='Training Loss')
+    ax2.plot(epochs_range, total_val_loss, label='Validation Loss')
+    ax2.set_title(f"Loss - {config['name']}")
+    ax2.legend()
+
+    plt.tight_layout()
+    training_curve_path = os.path.join(current_dir, f"training_curves_{config['name']}.png")
+    fig_curve.savefig(training_curve_path)
+    plt.close(fig_curve)
+
+    print(f"Saved Training Curves for {config['name']} at {training_curve_path}")
+    # --- Save loss plots and conf. matrix --- sd
 
     # --- Store Results ---
     # Use the history from the *last* training phase completed
